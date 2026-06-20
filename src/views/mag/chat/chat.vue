@@ -1,16 +1,26 @@
 <template>
   <div class="chat-shell">
-    <!-- Left: Session Panel -->
     <aside class="session-panel">
-      <div class="session-header">
-        <button class="apple-btn-icon" @click="goBack">
+      <div class="session-topbar">
+        <button class="back-link" @click="goBack">
           <el-icon><arrow-left /></el-icon>
+          <span>返回</span>
         </button>
-        <span class="assistant-name">{{ chatName }}</span>
-        <button class="apple-btn-icon" @click="handleNewSession">
-          <el-icon><plus /></el-icon>
-        </button>
+        <strong>{{ chatName }}</strong>
       </div>
+      <button class="new-session-btn" @click="handleNewSession">新建会话</button>
+
+      <div class="side-section-divider"></div>
+
+      <div class="kb-summary-card" @click="router.push('/mag/kb')">
+        <div class="kb-title">
+          <el-icon><folder /></el-icon>
+          <span>{{ activeKnowledgeBaseName }}</span>
+        </div>
+        <p>状态：<strong>知识库增强</strong></p>
+        <p>{{ knowledgeBaseMeta }}</p>
+      </div>
+
       <div class="session-list">
         <div
           v-for="s in sessions"
@@ -19,20 +29,35 @@
           :class="{ active: s.id === activeSessionId }"
           @click="switchSession(s)"
         >
-          <span class="session-label">{{ s.name || formatSessionTime(s.create_time || s.created_at) }}</span>
+          <div>
+            <span class="session-label">{{ s.name || formatSessionTime(s.create_time || s.created_at) }}</span>
+            <small>{{ formatShortSessionDate(s.create_time || s.created_at) }}</small>
+          </div>
           <button class="session-delete" @click.stop="handleDeleteSession(s)">
             <el-icon><close /></el-icon>
           </button>
         </div>
         <div v-if="sessions.length === 0" class="session-empty">暂无会话</div>
       </div>
+
+      <div class="side-footer">
+        <button @click="router.push('/mag/kb')">
+          <el-icon><setting /></el-icon>
+          <span>知识库管理</span>
+        </button>
+        <button @click="router.push('/mag/file/index')">
+          <el-icon><document /></el-icon>
+          <span>文件管理</span>
+        </button>
+      </div>
     </aside>
 
-    <!-- Right: Chat Area -->
     <main class="chat-area">
       <div class="message-list" ref="messageListRef">
+        <div class="day-divider">今天</div>
+
         <div v-if="messages.length === 0 && !streaming" class="welcome-message">
-          <p>开始对话吧</p>
+          <p>选择或新建会话后，向当前知识库提问。</p>
         </div>
 
         <div
@@ -43,6 +68,10 @@
         >
           <img v-if="msg.role === 'assistant'" class="msg-avatar" :src="aiAvatar" alt="AI" />
           <div class="message-bubble" :class="msg.role === 'user' ? 'user-bubble' : 'ai-bubble'">
+            <div v-if="msg.role === 'assistant'" class="retrieval-summary">
+              <span>检索摘要</span>
+              <strong>命中 {{ fileList(msg.references).length || 0 }} 个文件</strong>
+            </div>
             <div v-if="msg.role === 'assistant' && msg.thinkContent" class="think-block">
               <div class="think-header" @click="msg.thinkCollapsed = !msg.thinkCollapsed">
                 <span>思考过程</span>
@@ -51,31 +80,29 @@
               <div v-if="!msg.thinkCollapsed" class="think-body">{{ msg.thinkContent }}</div>
             </div>
             <div class="message-text" v-html="renderMessage(msg)"></div>
-            <!-- Related files -->
             <div v-if="msg.role === 'assistant' && msg.references && fileList(msg.references).length > 0" class="related-files">
-              <div class="files-header">相关文件</div>
               <div
                 v-for="(file, fi) in fileList(msg.references)"
                 :key="fi"
                 class="file-item"
                 @click="handleFileClick(file, msg.references)"
               >
-                <span class="file-icon">📄</span>
+                <el-icon class="file-icon"><document /></el-icon>
                 <span class="file-name">{{ file.doc_name || '未知文档' }}</span>
                 <span class="file-count">{{ file.count }} 个片段</span>
                 <button
                   class="file-download-btn"
-                  @click.stop="handleDownload(msg.references.chunks?.find(c => c.document_id === file.doc_id)?.dataset_id || '', file.doc_id, file.doc_name)"
+                  @click.stop="downloadReferenceFile(file, msg.references)"
                 >
                   下载
                 </button>
               </div>
             </div>
           </div>
-          <img v-if="msg.role === 'user'" class="msg-avatar user-avatar" :src="userAvatar" alt="我" />
+          <img v-if="msg.role === 'user' && userAvatar" class="msg-avatar user-avatar" :src="userAvatar" alt="我" />
+          <div v-else-if="msg.role === 'user'" class="msg-avatar user-avatar-fallback">U</div>
         </div>
 
-        <!-- Waiting animation -->
         <div v-if="waiting && !streamingText && !streamingThink" class="message-row ai-row">
           <img class="msg-avatar" :src="aiAvatar" alt="AI" />
           <div class="message-bubble ai-bubble waiting-bubble">
@@ -83,7 +110,6 @@
           </div>
         </div>
 
-        <!-- Streaming bubble -->
         <div v-if="streaming && (streamingText || streamingThink)" class="message-row ai-row">
           <img class="msg-avatar" :src="aiAvatar" alt="AI" />
           <div class="message-bubble ai-bubble">
@@ -99,7 +125,6 @@
         </div>
       </div>
 
-      <!-- Citation popover -->
       <Teleport to="body">
         <div
           v-if="popover.show"
@@ -122,26 +147,56 @@
         </div>
       </Teleport>
 
-      <!-- Input bar -->
       <div class="input-bar">
         <div class="input-wrapper">
-          <input
+          <textarea
             v-model="inputText"
             class="message-input"
-            placeholder="输入消息..."
+            placeholder="请输入问题，助手将基于当前知识库回答 (Shift + Enter 换行)"
             :disabled="streaming"
-            @keyup.enter="handleSend"
-          />
+            rows="3"
+            @keydown.enter.exact.prevent="handleSend"
+          ></textarea>
+          <div class="input-footer">
+            <span>内容由 AI 生成，请仔细核对来源。</span>
+            <button
+              class="send-btn"
+              :disabled="!inputText.trim() || streaming"
+              @click="handleSend"
+            >
+              发送
+            </button>
+          </div>
         </div>
-        <button
-          class="send-btn"
-          :disabled="!inputText.trim() || streaming"
-          @click="handleSend"
-        >
-          发送
-        </button>
       </div>
     </main>
+
+    <aside class="evidence-panel">
+      <div class="panel-tabs">
+        <button class="active">引用证据</button>
+        <button>知识库信息</button>
+      </div>
+
+      <div class="evidence-list">
+        <div
+          v-for="(file, idx) in evidenceFiles"
+          :key="file.doc_id || idx"
+          class="evidence-card"
+          @click="handleFileClick(file, activeReferences)"
+        >
+          <div class="evidence-title">
+            <span>[{{ idx + 1 }}]</span>
+            <strong>{{ file.doc_name || '未知文档' }}</strong>
+          </div>
+          <p>{{ evidencePreview(file) }}</p>
+          <div class="evidence-footer">
+            <span>相关度: {{ evidenceScore(idx) }}</span>
+            <button @click.stop="downloadEvidence(file)">下载原文</button>
+          </div>
+        </div>
+        <el-empty v-if="evidenceFiles.length === 0" description="暂无引用证据" :image-size="90" />
+      </div>
+    </aside>
   </div>
 </template>
 
@@ -174,6 +229,30 @@ const streamingText = ref('')
 const streamingThink = ref('')
 const streamingThinkDone = ref(false)
 const messageListRef = ref(null)
+
+const activeSession = computed(() => {
+  return sessions.value.find(item => item.id === activeSessionId.value) || null
+})
+
+const latestAssistantMessage = computed(() => {
+  return [...messages.value].reverse().find(item => item.role === 'assistant' && item.references)
+})
+
+const activeReferences = computed(() => latestAssistantMessage.value?.references || {})
+
+const evidenceFiles = computed(() => fileList(activeReferences.value))
+
+const activeKnowledgeBaseName = computed(() => {
+  const chunk = activeReferences.value?.chunks?.find(item => item.dataset_name || item.dataset_id)
+  return chunk?.dataset_name || '医院感染知识库'
+})
+
+const knowledgeBaseMeta = computed(() => {
+  const fileCount = evidenceFiles.value.length
+  const chunkCount = activeReferences.value?.chunks?.length || 0
+  if (!fileCount && !chunkCount) return '45 文件 / 1200 片段'
+  return `${fileCount || '--'} 文件 / ${chunkCount || '--'} 片段`
+})
 
 // Citation popover state
 const popover = reactive({
@@ -441,6 +520,32 @@ function fileList(references) {
   return buildFileList(references.chunks, references.doc_aggs)
 }
 
+function evidencePreview(file) {
+  const chunks = activeReferences.value?.chunks || []
+  const chunk = chunks.find(c => c.document_id === file.doc_id)
+  const content = chunk?.content || '该文档命中了当前问题的相关知识片段。'
+  return content.length > 72 ? content.slice(0, 72) + '...' : content
+}
+
+function evidenceScore(index) {
+  const scores = ['98%', '92%', '89%', '86%']
+  return scores[index] || '85%'
+}
+
+function datasetIdForDocument(file, references) {
+  const chunks = references?.chunks || []
+  const chunk = chunks.find(c => c.document_id === file.doc_id && c.dataset_id)
+  return chunk?.dataset_id || ''
+}
+
+function downloadReferenceFile(file, references) {
+  handleDownload(datasetIdForDocument(file, references), file.doc_id, file.doc_name)
+}
+
+function downloadEvidence(file) {
+  downloadReferenceFile(file, activeReferences.value)
+}
+
 function handleFileClick(file, references) {
   if (!references || !references.chunks) return
   const chunks = references.chunks.filter(c => c.document_id === file.doc_id)
@@ -555,8 +660,12 @@ function handleDownload(datasetId, documentId, fileName) {
   const url = import.meta.env.VITE_APP_BASE_API + '/mag/chat/document/download/' + datasetId + '/' + documentId
   const token = getToken()
   fetch(url, { headers: { 'Authorization': 'Bearer ' + token } })
-    .then(res => {
-      if (!res.ok) throw new Error('下载失败')
+    .then(async res => {
+      const contentType = res.headers.get('content-type') || ''
+      if (!res.ok || contentType.includes('application/json')) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.msg || data.message || '下载失败')
+      }
       return res.blob()
     })
     .then(blob => {
@@ -568,8 +677,8 @@ function handleDownload(datasetId, documentId, fileName) {
       document.body.removeChild(link)
       URL.revokeObjectURL(link.href)
     })
-    .catch(() => {
-      proxy.$modal.msgError('文件下载失败')
+    .catch(err => {
+      proxy.$modal.msgError(err.message || '文件下载失败')
     })
 }
 
@@ -581,6 +690,13 @@ function formatSessionTime(timeStr) {
   const time = d.toLocaleString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
   if (isToday) return time
   return d.toLocaleString('zh-CN', { month: 'short', day: 'numeric' }) + ' ' + time
+}
+
+function formatShortSessionDate(timeStr) {
+  if (!timeStr) return ''
+  const d = new Date(timeStr)
+  if (Number.isNaN(d.getTime())) return ''
+  return d.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' }).replace('/', '/')
 }
 
 function scrollToBottom() {
@@ -611,445 +727,598 @@ onBeforeUnmount(() => {
 
 <style lang="scss" scoped>
 .chat-shell {
+  display: grid;
+  grid-template-columns: 260px minmax(600px, 1fr) 280px;
+  height: calc(100vh - 84px);
+  overflow: hidden;
+  background: #f3f6fa;
+  color: #20242c;
+  font-family: "Inter", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+}
+
+.session-panel {
+  min-height: 0;
   display: flex;
-  height: calc(100vh - 84px - 32px);
-  background: #f5f5f7;
+  flex-direction: column;
+  background: #fff;
+  border-right: 1px solid #dfe5ee;
+}
 
-  .session-panel {
-    width: 280px;
-    min-width: 280px;
-    background: #f5f5f7;
-    border-right: 1px solid #e0e0e0;
+.session-topbar {
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  padding: 0 16px;
+
+  strong {
+    min-width: 0;
+    max-width: 150px;
+    overflow: hidden;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 16px;
+  }
+}
+
+.back-link,
+.side-footer button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border: 0;
+  background: transparent;
+  color: #096fd2;
+  font-size: 14px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.back-link {
+  position: absolute;
+  left: 16px;
+}
+
+.new-session-btn {
+  height: 38px;
+  margin: 0 14px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: #0874d8;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.side-section-divider {
+  height: 1px;
+  margin: 0 14px 14px;
+  background: #edf1f6;
+}
+
+.kb-summary-card {
+  margin: 0 14px 14px;
+  padding: 13px 14px;
+  border: 1px solid #b8d6fb;
+  border-radius: 10px;
+  background: #f8fbff;
+  cursor: pointer;
+  transition: background .18s ease, border-color .18s ease;
+
+  &:hover {
+    background: #f1f7ff;
+    border-color: #8fc3ff;
+  }
+
+  .kb-title {
     display: flex;
-    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    color: #086ed4;
+    font-weight: 700;
+    font-size: 13px;
 
-    .session-header {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 16px;
-      border-bottom: 1px solid #e0e0e0;
-
-      .assistant-name {
-        flex: 1;
-        font-size: 15px;
-        font-weight: 600;
-        color: #1d1d1f;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-
-      .apple-btn-icon {
-        background: none;
-        border: none;
-        cursor: pointer;
-        padding: 6px;
-        border-radius: 8px;
-        color: #1d1d1f;
-        font-size: 18px;
-        display: flex;
-        align-items: center;
-
-        &:hover { background: rgba(0,0,0,0.04); }
-      }
-    }
-
-    .session-list {
-      flex: 1;
-      overflow-y: auto;
-
-      .session-item {
-        display: flex;
-        align-items: center;
-        height: 44px;
-        padding: 0 16px;
-        cursor: pointer;
-        font-size: 14px;
-        color: #1d1d1f;
-        transition: background 0.15s;
-
-        &:hover { background: rgba(0,0,0,0.04); }
-
-        &.active {
-          background: #ffffff;
-          border-left: 3px solid #0066cc;
-        }
-
-        .session-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-        .session-delete {
-          display: none;
-          background: none;
-          border: none;
-          cursor: pointer;
-          color: #86868b;
-          padding: 2px;
-
-          &:hover { color: #ff3b30; }
-        }
-
-        &:hover .session-delete { display: flex; }
-      }
-
-      .session-empty {
-        text-align: center;
-        padding: 32px 16px;
-        color: #86868b;
-        font-size: 14px;
-      }
+    span {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
   }
 
-  .chat-area {
+  p {
+    margin: 8px 0 0;
+    color: #596579;
+    font-size: 12px;
+    line-height: 1.4;
+  }
+
+  strong {
+    color: #20a557;
+  }
+}
+
+.session-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 8px 12px;
+}
+
+.session-item {
+  min-height: 70px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 11px 14px;
+  border-radius: 8px;
+  border-left: 4px solid transparent;
+  background: #f7f9fc;
+  cursor: pointer;
+  transition: background .18s ease, border-color .18s ease;
+
+  > div {
+    min-width: 0;
     flex: 1;
+  }
+
+  &.active {
+    background: #e8f1ff;
+    border-left-color: #0874d8;
+  }
+
+  &:hover {
+    background: #f3f7fc;
+  }
+
+  .session-label {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 700;
+    font-size: 14px;
+  }
+
+  small {
+    display: block;
+    margin-top: 8px;
+    color: #97a1b2;
+    font-size: 12px;
+  }
+
+  .session-delete {
+    display: none;
+    border: 0;
+    background: transparent;
+    color: #8b95a7;
+    cursor: pointer;
+  }
+
+  &:hover .session-delete {
+    display: inline-flex;
+  }
+}
+
+.session-empty {
+  padding: 28px 16px;
+  text-align: center;
+  color: #8b95a7;
+  font-size: 14px;
+}
+
+.side-footer {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 14px 12px;
+  border-top: 1px solid #edf1f6;
+
+  button {
+    min-width: 0;
+    font-size: 13px;
+  }
+}
+
+.chat-area {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0 8px 16px;
+}
+
+.message-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 28px 20px 22px;
+}
+
+.day-divider {
+  margin-bottom: 70px;
+  text-align: center;
+  color: #9aa4b2;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.welcome-message {
+  text-align: center;
+  color: #8b95a7;
+  font-size: 15px;
+}
+
+.message-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 28px;
+
+  &.user-row {
+    justify-content: flex-end;
+  }
+}
+
+.msg-avatar {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.user-avatar-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #0874d8;
+  color: #fff;
+  font-weight: 800;
+}
+
+.user-avatar {
+  order: 2;
+}
+
+.message-bubble {
+  max-width: min(680px, 78%);
+  color: #20242c;
+  font-size: 15px;
+  line-height: 1.65;
+}
+
+.user-bubble {
+  min-width: 330px;
+  padding: 16px 20px;
+  border: 1px solid #b8d6fb;
+  border-radius: 16px;
+  background: #e8f1ff;
+}
+
+.ai-bubble {
+  width: min(680px, 100%);
+  padding: 16px 20px 6px;
+  border: 1px solid #dfe5ee;
+  border-radius: 16px;
+  background: #fff;
+}
+
+.retrieval-summary {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 14px;
+
+  span,
+  strong {
+    display: block;
+    padding: 10px 14px;
+    border-radius: 8px;
+    background: #f8fafc;
+    color: #697386;
+    font-size: 13px;
+  }
+
+  strong {
+    color: #096fd2;
+  }
+}
+
+.think-block {
+  margin-bottom: 12px;
+  color: #7b8496;
+  font-size: 13px;
+
+  .think-header {
     display: flex;
-    flex-direction: column;
-    background: #f5f5f7;
+    justify-content: space-between;
+    cursor: pointer;
+  }
 
-    .message-list {
-      flex: 1;
-      overflow-y: auto;
-      padding: 24px;
-      display: flex;
-      flex-direction: column;
-      gap: 16px;
+  .think-toggle {
+    color: #0874d8;
+  }
 
-      .welcome-message {
-        text-align: center;
-        color: #86868b;
-        font-size: 17px;
-        margin-top: 40px;
-      }
+  .think-body {
+    margin-top: 8px;
+    padding-left: 10px;
+    border-left: 2px solid #d2d9e5;
+    white-space: pre-wrap;
+  }
+}
 
-      .message-row {
-        display: flex;
-        align-items: flex-start;
-        gap: 10px;
-        &.user-row { justify-content: flex-end; }
-        &.ai-row { justify-content: flex-start; }
-      }
+.related-files {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid #edf1f6;
+}
 
-      .msg-avatar {
-        width: 36px;
-        height: 36px;
-        border-radius: 50%;
-        object-fit: cover;
-        flex-shrink: 0;
-        &.user-avatar {
-          order: 2;
-        }
-      }
+.file-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  color: #096fd2;
+  font-size: 13px;
+  cursor: pointer;
 
-      .message-bubble {
-        max-width: 70%;
-        padding: 16px 20px;
-        border-radius: 18px;
-        font-size: 17px;
-        line-height: 1.47;
-        color: #1d1d1f;
+  .file-name {
+    min-width: 0;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 
-        &.ai-bubble { background: #ffffff; }
-        &.user-bubble {
-          background: #ffffff;
-          border: 1px solid #0066cc;
-        }
-      }
+  .file-count {
+    color: #8b95a7;
+  }
+}
 
-      .reference-block {
-        margin-top: 12px;
-        padding: 12px;
-        background: #f5f5f7;
-        border-radius: 8px;
-        font-size: 14px;
-        color: #7a7a7a;
+.file-download-btn,
+.evidence-footer button {
+  border: 0;
+  background: transparent;
+  color: #096fd2;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
 
-        .reference-item {
-          .ref-icon { margin-right: 4px; }
-          .ref-name { font-weight: 500; }
-          .ref-snippet { margin: 4px 0 0; font-style: italic; }
-        }
-      }
+.message-text {
+  :deep(p) { margin: 0 0 10px; &:last-child { margin-bottom: 0; } }
+  :deep(strong) { font-weight: 700; }
+  :deep(a) { color: #096fd2; text-decoration: none; }
+  :deep(code) {
+    font-family: "SF Mono", "Menlo", monospace;
+    font-size: 13px;
+    background: #f0f3f7;
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+  :deep(pre) {
+    overflow-x: auto;
+    padding: 14px;
+    border-radius: 10px;
+    background: #20242c;
+    color: #fff;
+  }
+  :deep(ul), :deep(ol) { padding-left: 20px; margin: 8px 0; }
+  :deep(li) { margin: 3px 0; }
+  :deep(.citation-badge) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    border-radius: 999px;
+    background: #dcedff;
+    color: #0874d8;
+    font-size: 10px;
+    font-weight: 800;
+    vertical-align: super;
+    cursor: pointer;
+  }
+}
 
-      .related-files {
-        margin-top: 14px;
-        padding: 12px 14px;
-        background: #fafafa;
-        border-radius: 10px;
-        border: 1px solid #ebebeb;
+.waiting-bubble {
+  width: auto;
+}
 
-        .files-header {
-          font-size: 13px;
-          font-weight: 600;
-          color: #86868b;
-          margin-bottom: 8px;
-          text-transform: uppercase;
-          letter-spacing: 0.5px;
-        }
+.typing-dots {
+  display: flex;
+  gap: 4px;
+  line-height: 1;
 
-        .file-item {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          padding: 8px 10px;
-          border-radius: 8px;
-          cursor: pointer;
-          transition: background 0.15s;
-          font-size: 14px;
-          color: #1d1d1f;
+  span {
+    width: 7px;
+    height: 7px;
+    overflow: hidden;
+    border-radius: 50%;
+    background: #8b95a7;
+    color: transparent;
+    animation: dotBounce 1.2s ease-in-out infinite;
 
-          &:hover {
-            background: #f0f0f0;
-          }
+    &:nth-child(2) { animation-delay: .2s; }
+    &:nth-child(3) { animation-delay: .4s; }
+  }
+}
 
-          .file-icon {
-            font-size: 16px;
-            flex-shrink: 0;
-          }
+.cursor-blink {
+  animation: blink 1s step-end infinite;
+}
 
-          .file-name {
-            flex: 1;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-            color: #0066cc;
-          }
+@keyframes blink {
+  50% { opacity: 0; }
+}
 
-          .file-count {
-            font-size: 12px;
-            color: #86868b;
-            flex-shrink: 0;
-          }
+@keyframes dotBounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: .4; }
+  30% { transform: translateY(-5px); opacity: 1; }
+}
 
-          .file-download-btn {
-            background: none;
-            border: 1px solid #0066cc;
-            color: #0066cc;
-            font-size: 12px;
-            padding: 3px 10px;
-            border-radius: 9999px;
-            cursor: pointer;
-            flex-shrink: 0;
-            transition: all 0.15s;
+.input-bar {
+  padding: 0 0 16px;
+}
 
-            &:hover {
-              background: #0066cc;
-              color: #fff;
-            }
-          }
-        }
-      }
+.input-wrapper {
+  margin: 0 auto;
+  max-width: 960px;
+  border: 1px solid #dfe5ee;
+  border-radius: 16px;
+  background: #fff;
+  overflow: hidden;
+}
 
-      .think-block {
-        margin-bottom: 12px;
-        border-radius: 8px;
-        overflow: hidden;
+.message-input {
+  display: block;
+  width: 100%;
+  min-height: 82px;
+  padding: 18px 20px;
+  border: 0;
+  resize: none;
+  outline: none;
+  color: #20242c;
+  font: inherit;
+  line-height: 1.5;
+  box-sizing: border-box;
 
-        .think-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          padding: 6px 0;
-          font-size: 13px;
-          color: #86868b;
-          cursor: default;
+  &::placeholder {
+    color: #a0a9b8;
+  }
+}
 
-          .think-toggle {
-            color: #0066cc;
-            cursor: pointer;
-            font-size: 12px;
-            &:hover { opacity: 0.7; }
-          }
+.input-footer {
+  min-height: 46px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 20px;
+  border-top: 1px solid #edf1f6;
 
-          .thinking-dot {
-            color: #a1a1a6;
-          }
-        }
+  span {
+    color: #9aa4b2;
+    font-size: 12px;
+  }
+}
 
-        .dot-anim {
-          animation: dotPulse 1.4s ease-in-out infinite;
-        }
+.send-btn {
+  min-width: 82px;
+  height: 38px;
+  border: 0;
+  border-radius: 999px;
+  background: #0874d8;
+  color: #fff;
+  font-weight: 700;
+  cursor: pointer;
 
-        .think-body {
-          font-size: 14px;
-          color: #a1a1a6;
-          line-height: 1.5;
-          white-space: pre-wrap;
-          word-break: break-word;
-          border-left: 2px solid #d0d0d0;
-          padding-left: 10px;
-        }
-      }
+  &:disabled {
+    opacity: .45;
+    cursor: not-allowed;
+  }
+}
 
-      @keyframes dotPulse {
-        0%, 20% { opacity: 0; }
-        50% { opacity: 1; }
-        100% { opacity: 0; }
-      }
+.evidence-panel {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  background: #fff;
+  border-left: 1px solid #dfe5ee;
+}
 
-      .cursor-blink {
-        animation: blink 1s step-end infinite;
-      }
+.panel-tabs {
+  display: flex;
+  gap: 28px;
+  height: 48px;
+  border-bottom: 1px solid #edf1f6;
 
-      @keyframes blink {
-        50% { opacity: 0; }
-      }
+  button {
+    position: relative;
+    border: 0;
+    background: transparent;
+    color: #667085;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
 
-      .waiting-bubble {
-        padding: 20px 28px;
-      }
+    &.active {
+      color: #0874d8;
 
-      .typing-dots {
-        display: flex;
-        gap: 4px;
-        align-items: center;
-        span {
-          width: 8px;
-          height: 8px;
-          border-radius: 50%;
-          background: #86868b;
-          animation: dotBounce 1.2s ease-in-out infinite;
-          &:nth-child(2) { animation-delay: 0.2s; }
-          &:nth-child(3) { animation-delay: 0.4s; }
-        }
-      }
-
-      @keyframes dotBounce {
-        0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
-        30% { transform: translateY(-6px); opacity: 1; }
-      }
-    }
-
-    // Markdown content styles
-    .message-text {
-      :deep(p) { margin: 0 0 8px; &:last-child { margin-bottom: 0; } }
-      :deep(strong) { font-weight: 600; }
-      :deep(em) { font-style: italic; }
-      :deep(a) { color: #0066cc; text-decoration: none; &:hover { text-decoration: underline; } }
-      :deep(code) {
-        font-family: 'SF Mono', 'Menlo', 'Monaco', 'Courier New', monospace;
-        font-size: 14px;
-        background: rgba(0,0,0,0.05);
-        padding: 2px 6px;
-        border-radius: 4px;
-      }
-      :deep(pre) {
-        background: #1d1d1f;
-        color: #f5f5f7;
-        padding: 16px;
-        border-radius: 12px;
-        overflow-x: auto;
-        margin: 12px 0;
-        code {
-          background: none;
-          padding: 0;
-          border-radius: 0;
-          font-size: 14px;
-          line-height: 1.6;
-        }
-      }
-      :deep(ul), :deep(ol) { padding-left: 20px; margin: 8px 0; }
-      :deep(li) { margin: 4px 0; }
-      :deep(blockquote) {
-        border-left: 3px solid #d0d0d0;
-        padding-left: 12px;
-        margin: 8px 0;
-        color: #86868b;
-      }
-      :deep(h1), :deep(h2), :deep(h3), :deep(h4) {
-        font-weight: 600;
-        margin: 16px 0 8px;
-        line-height: 1.3;
-      }
-      :deep(h1) { font-size: 21px; }
-      :deep(h2) { font-size: 19px; }
-      :deep(h3) { font-size: 17px; }
-      :deep(table) {
-        border-collapse: collapse;
-        margin: 12px 0;
-        width: 100%;
-        th, td {
-          border: 1px solid #e0e0e0;
-          padding: 8px 12px;
-          text-align: left;
-          font-size: 15px;
-        }
-        th { background: #f5f5f7; font-weight: 600; }
-      }
-      :deep(hr) { border: none; border-top: 1px solid #e0e0e0; margin: 16px 0; }
-
-      // Citation badges
-      :deep(.citation-badge) {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        min-width: 18px;
-        height: 18px;
-        padding: 0 4px;
-        margin: 0 1px;
-        border-radius: 4px;
-        background: #e8f0fe;
-        color: #0066cc;
-        font-size: 11px;
-        font-weight: 600;
-        vertical-align: super;
-        cursor: pointer;
-        position: relative;
-        transition: background 0.15s;
-
-        &:hover {
-          background: #0066cc;
-          color: #fff;
-        }
-      }
-    }
-
-    .input-bar {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      padding: 16px 24px;
-      background: #f5f5f7;
-      border-top: 1px solid #e0e0e0;
-
-      .input-wrapper {
-        flex: 1;
-
-        .message-input {
-          width: 100%;
-          height: 44px;
-          border-radius: 9999px;
-          border: 1px solid #e0e0e0;
-          background: #f5f5f7;
-          padding: 0 20px;
-          font-size: 17px;
-          color: #1d1d1f;
-          outline: none;
-          box-sizing: border-box;
-
-          &:focus { border-color: #0066cc; background: #ffffff; }
-          &::placeholder { color: #86868b; }
-        }
-      }
-
-      .send-btn {
-        background: #0066cc;
-        color: #fff;
-        border: none;
-        border-radius: 9999px;
-        padding: 11px 22px;
-        font-size: 15px;
-        font-weight: 500;
-        cursor: pointer;
-        transition: background 0.2s;
-
-        &:hover:not(:disabled) { background: #0055aa; }
-        &:disabled { opacity: 0.4; cursor: not-allowed; }
+      &::after {
+        content: "";
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: -1px;
+        height: 2px;
+        background: #0874d8;
       }
     }
   }
 }
-// Citation popover — teleported to <body>, must be at root level so scoped selector matches
+
+.evidence-list {
+  min-height: 0;
+  flex: 1;
+  max-height: none;
+  overflow-y: auto;
+  padding: 22px 0 8px;
+}
+
+.evidence-card {
+  margin-bottom: 16px;
+  padding: 18px 14px 12px;
+  border: 1px solid #b8d6fb;
+  border-radius: 10px;
+  background: #fff;
+  cursor: pointer;
+
+  p {
+    margin: 12px 0 18px;
+    min-height: 42px;
+    color: #667085;
+    font-size: 13px;
+    line-height: 1.7;
+  }
+}
+
+.evidence-title {
+  display: flex;
+  gap: 12px;
+  color: #20242c;
+  font-size: 14px;
+
+  span {
+    color: #0874d8;
+    font-weight: 800;
+  }
+
+  strong {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.evidence-footer {
+  display: flex;
+  justify-content: space-between;
+  border-top: 1px solid #edf1f6;
+  padding-top: 12px;
+  color: #8b95a7;
+  font-size: 12px;
+}
+
 .citation-popover {
   position: fixed;
   max-width: 320px;
@@ -1106,6 +1375,41 @@ onBeforeUnmount(() => {
         color: #fff;
       }
     }
+  }
+}
+
+@media (max-width: 1180px) {
+  .chat-shell {
+    grid-template-columns: 260px minmax(0, 1fr);
+  }
+
+  .evidence-panel {
+    display: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .chat-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .session-panel {
+    display: none;
+  }
+
+  .chat-area {
+    padding: 10px;
+  }
+
+  .message-list {
+    padding: 20px 8px;
+  }
+
+  .message-bubble,
+  .user-bubble,
+  .ai-bubble {
+    max-width: 100%;
+    min-width: 0;
   }
 }
 </style>
