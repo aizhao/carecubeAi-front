@@ -1,0 +1,201 @@
+// ========== Apple Design Tokens ==========
+// Reference: DESIGN.md
+
+// --- Brand ---
+$primary: #0066cc;
+$primary-focus: #0071e3;
+$primary-on-dark: #2997ff;
+
+// --- Surface ---
+$canvas: #ffffff;
+$parchment: #f5f5f7;
+$surface-pearl: #fafafc;
+
+// --- Text ---
+$ink: #1d1d1f;
+$ink-muted-80: #333333;
+$ink-muted-48: #7a7a7a;
+
+// --- Divider ---
+$hairline: #e0e0e0;
+$divider-soft: #f0f0f0;
+
+// --- Legacy aliases (for backward compat in non-shell code) ---
+$blue: $ink;
+$light-blue: #3a3a3c;
+$red: #C03639;
+$pink: #E65D6E;
+$green: #30B08F;
+$tiffany: #4AB7BD;
+$yellow: #FEC171;
+$panGreen: #30B08F;
+
+// --- Sidebar (unified Parchment) ---
+$menuBg: $parchment;
+$menuText: $ink;
+$menuActiveText: $primary;
+$menuHover: rgba(0, 0, 0, 0.04);
+
+$menuLightBg: $parchment;
+$menuLightHover: rgba(0, 0, 0, 0.04);
+$menuLightText: $ink;
+$menuLightActiveText: $primary;
+
+$base-sidebar-width: 220px;
+$sideBarWidth: 220px;
+
+// --- Legacy dark menu vars (kept for export only, not used in new shell) ---
+$base-menu-color: rgba(255, 255, 255, 0.65);
+$base-menu-color-active: #ffffff;
+$base-menu-background: #141414;
+$base-sub-menu-background: #1a1a1a;
+$base-sub-menu-hover: rgba(255, 255, 255, 0.06);
+
+// --- Component colors ---
+$--color-primary: $primary;
+$--color-success: #30B08F;
+$--color-warning: #E6A23C;
+$--color-danger: #F56C6C;
+$--color-info: #909399;
+
+// --- Export for JS access ---
+:export {
+  menuBg: $menuBg;
+  menuText: $menuText;
+  menuActiveText: $menuActiveText;
+  menuHover: $menuHover;
+  menuLightBg: $menuLightBg;
+  menuLightHover: $menuLightHover;
+  menuLightText: $menuLightText;
+  menuLightActiveText: $menuLightActiveText;
+  sideBarWidth: $sideBarWidth;
+  blue: $blue;
+  lightBlue: $light-blue;
+  red: $red;
+  pink: $pink;
+  green: $green;
+  tiffany: $tiffany;
+  yellow: $yellow;
+  panGreen: $panGreen;
+  colorPrimary: $--color-primary;
+  colorSuccess: $--color-success;
+  colorWarning: $--color-warning;
+  colorDanger: $--color-danger;
+  colorInfo: $--color-info;
+}
+
+// ========== CSS Custom Properties ==========
+
+:root {
+  --sidebar-bg: #{$parchment};
+  --sidebar-text: #{$ink};
+  --menu-hover: #{$menuHover};
+  --navbar-bg: #{$parchment};
+  --navbar-text: #{$ink};
+  --navbar-height: 44px;
+  --tags-height: 36px;
+  --splitpanes-default-bg: #{$canvas};
+}
+
+// ========== Dark Mode ==========
+html.dark {
+  --sidebar-bg: #141414;
+  --sidebar-text: #ffffff;
+  --menu-hover: #2d2d2d;
+  --menu-active-text: #{$primary-on-dark};
+
+  --navbar-bg: #141414;
+  --navbar-text: #ffffff;
+  --navbar-hover: #141414;
+
+  --tags-bg: #141414;
+  --tags-item-bg: #1d1e1f;
+  --tags-item-border: #303030;
+  --tags-item-text: #d0d0d0;
+  --tags-item-hover: #2d2d2d;
+  --tags-close-hover: #64666a;
+  --tags-card-active-bg: #1d1e1f;
+  --tags-active-indicator: #{$primary-on-dark};
+
+  --splitpanes-bg: #141414;
+  --splitpanes-border: #303030;
+  --splitpanes-splitter-bg: #1d1e1f;
+  --splitpanes-splitter-hover-bg: #2d2d2d;
+  --splitpanes-default-bg: #141414;
+
+  --blockquote-bg: #1d1e1f;
+  --blockquote-border: #303030;
+  --blockquote-text: #d0d0d0;
+  --cron-border: #303030;
+
+  --el-bg-color: #141414;
+  --el-bg-color-overlay: #1d1e1f;
+  --el-text-color-primary: #ffffff;
+  --el-text-color-regular: #d0d0d0;
+  --el-border-color: #434343;
+
+  --primary-bg: #18212b;
+  --sidebar-logo-text: #d0d0d0;
+
+  // Sidebar dark mode overrides
+  .sidebar-container {
+    .el-menu-item:not(.is-active), .menu-title {
+      color: var(--el-text-color-regular);
+    }
+    & .nest-menu .el-sub-menu>.el-sub-menu__title,
+    & .el-sub-menu .el-menu-item {
+      background-color: var(--el-bg-color) !important;
+      &:hover { background-color: var(--menu-hover) !important; }
+    }
+  }
+
+  // Table overrides
+  .el-table {
+    --el-table-header-bg-color: var(--el-bg-color-overlay) !important;
+    --el-table-header-text-color: var(--el-text-color-regular) !important;
+    --el-table-border-color: var(--el-border-color) !important;
+    --el-table-row-hover-bg-color: var(--el-bg-color-overlay) !important;
+  }
+
+  // Tree overrides
+  .el-tree {
+    .el-tree-node.is-current > .el-tree-node__content {
+      background-color: var(--el-bg-color-overlay) !important;
+      color: var(--el-color-primary);
+    }
+  }
+
+  // Dropdown overrides
+  .el-dropdown-menu__item:not(.is-disabled):focus,
+  .el-dropdown-menu__item:not(.is-disabled):hover {
+    background-color: var(--navbar-hover) !important;
+  }
+
+  // Button overrides
+  .el-button--primary.is-plain {
+    background-color: var(--primary-bg);
+    border-color: var(--el-color-primary-light-2);
+    color: var(--el-color-primary-light-2);
+  }
+
+  // Tag overrides
+  .el-tag--primary {
+    background-color: var(--primary-bg);
+    border-color: var(--el-border-color);
+    color: var(--el-color-primary);
+  }
+
+  // Blockquote
+  blockquote {
+    background-color: var(--blockquote-bg) !important;
+    border-left-color: var(--blockquote-border) !important;
+    color: var(--blockquote-text) !important;
+  }
+
+  // Copyright
+  .copyright {
+    background-color: var(--el-bg-color) !important;
+    color: var(--el-text-color-regular) !important;
+    border-top: 1px solid var(--el-bg-color) !important;
+  }
+}
