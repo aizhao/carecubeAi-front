@@ -1,6 +1,7 @@
 <template>
-  <div class="chat-shell">
-    <aside class="session-panel">
+  <div class="chat-page">
+    <div class="chat-shell">
+      <aside class="session-panel">
       <div class="session-topbar">
         <button class="back-link" @click="goBack">
           <el-icon><arrow-left /></el-icon>
@@ -173,11 +174,11 @@
 
     <aside class="evidence-panel">
       <div class="panel-tabs">
-        <button class="active">引用证据</button>
-        <button>知识库信息</button>
+        <button :class="{ active: activeEvidenceTab === 'evidence' }" @click="activeEvidenceTab = 'evidence'">引用证据</button>
+        <button :class="{ active: activeEvidenceTab === 'kb' }" @click="activeEvidenceTab = 'kb'">知识库信息</button>
       </div>
 
-      <div class="evidence-list">
+      <div class="evidence-list" v-show="activeEvidenceTab === 'evidence'">
         <div
           v-for="(file, idx) in evidenceFiles"
           :key="file.doc_id || idx"
@@ -196,12 +197,79 @@
         </div>
         <el-empty v-if="evidenceFiles.length === 0" description="暂无引用证据" :image-size="90" />
       </div>
-    </aside>
+
+      <div class="kb-info-panel" v-show="activeEvidenceTab === 'kb'">
+        <div class="kb-info-section">
+          <h4>知识库名称</h4>
+          <p>{{ activeKnowledgeBaseName }}</p>
+        </div>
+        <div class="kb-info-section">
+          <h4>引用概览</h4>
+          <p>引用文件数：{{ evidenceFiles.length }}</p>
+          <p>引用片段数：{{ activeReferenceChunks.length }}</p>
+        </div>
+        <div class="kb-info-section" v-if="activeReferenceChunks.length">
+          <h4>引用片段详情</h4>
+          <div
+            v-for="(chunk, idx) in activeReferenceChunks"
+            :key="idx"
+            class="kb-chunk-item"
+          >
+            <div class="kb-chunk-header">
+              <span>[{{ idx + 1 }}]</span>
+              <strong>{{ chunk.doc_name || chunk.document_name || '未知文档' }}</strong>
+            </div>
+            <p class="kb-chunk-content">{{ (chunk.content || '').slice(0, 200) }}{{ (chunk.content || '').length > 200 ? '...' : '' }}</p>
+          </div>
+        </div>
+        <el-empty v-if="!activeReferenceChunks.length" description="当前会话暂无引用数据" :image-size="90" />
+      </div>
+      </aside>
+    </div>
+
+    <!-- 文件预览对话框 -->
+    <el-dialog
+      v-model="preview.visible"
+      :title="preview.title"
+      width="70%"
+      top="5vh"
+      destroy-on-close
+      class="preview-dialog"
+      @closed="closePreview"
+    >
+      <div class="preview-loading" v-if="preview.loading">
+        <el-icon class="is-loading" :size="32"><loading /></el-icon>
+        <p>正在加载预览...</p>
+      </div>
+      <div class="preview-unsupported" v-else-if="preview.unsupported">
+        <el-icon :size="48" color="#909399"><WarningFilled /></el-icon>
+        <p>此文件格式不支持在线预览</p>
+        <p class="preview-hint">请点击下载按钮获取文件</p>
+      </div>
+      <div class="preview-content" v-else-if="preview.blobUrl">
+        <iframe
+          v-if="preview.type === 'pdf'"
+          :src="preview.blobUrl"
+          class="preview-iframe"
+          frameborder="0"
+        />
+        <img
+          v-else-if="preview.type === 'image'"
+          :src="preview.blobUrl"
+          class="preview-image"
+          alt="预览"
+        />
+        <pre v-else-if="preview.type === 'text'" class="preview-text">{{ preview.textContent }}</pre>
+      </div>
+      <template #footer>
+        <el-button @click="closePreview">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, getCurrentInstance, onMounted, onBeforeUnmount, nextTick, computed } from 'vue'
+import { ref, reactive, getCurrentInstance, onMounted, onBeforeUnmount, onDeactivated, onActivated, nextTick, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { listSessions, createSession, delSessions, getSession, sendMessageStream } from '@/api/mag/chat'
 import { marked } from 'marked'
@@ -209,6 +277,8 @@ import { buildCitationHtml, buildFileList, hasCitationMarkers } from '@/utils/ci
 import { getToken } from '@/utils/auth'
 import useUserStore from '@/store/modules/user'
 import aiLogo from '@/assets/logo/carecube.jpg'
+
+defineOptions({ name: 'ChatConversation' })
 
 const { proxy } = getCurrentInstance()
 const router = useRouter()
@@ -221,6 +291,7 @@ const aiAvatar = aiLogo
 
 const sessions = ref([])
 const activeSessionId = ref(null)
+const activeEvidenceTab = ref('evidence')
 const messages = ref([])
 const inputText = ref('')
 const streaming = ref(false)
@@ -229,6 +300,7 @@ const streamingText = ref('')
 const streamingThink = ref('')
 const streamingThinkDone = ref(false)
 const messageListRef = ref(null)
+let abortStream = null
 
 const activeSession = computed(() => {
   return sessions.value.find(item => item.id === activeSessionId.value) || null
@@ -239,17 +311,18 @@ const latestAssistantMessage = computed(() => {
 })
 
 const activeReferences = computed(() => latestAssistantMessage.value?.references || {})
+const activeReferenceChunks = computed(() => referenceChunks(activeReferences.value))
 
 const evidenceFiles = computed(() => fileList(activeReferences.value))
 
 const activeKnowledgeBaseName = computed(() => {
-  const chunk = activeReferences.value?.chunks?.find(item => item.dataset_name || item.dataset_id)
+  const chunk = referenceChunks(activeReferences.value).find(item => item.dataset_name || item.dataset_id)
   return chunk?.dataset_name || '医院感染知识库'
 })
 
 const knowledgeBaseMeta = computed(() => {
   const fileCount = evidenceFiles.value.length
-  const chunkCount = activeReferences.value?.chunks?.length || 0
+  const chunkCount = referenceChunks(activeReferences.value).length
   if (!fileCount && !chunkCount) return '45 文件 / 1200 片段'
   return `${fileCount || '--'} 文件 / ${chunkCount || '--'} 片段`
 })
@@ -267,6 +340,18 @@ const popover = reactive({
 })
 let popoverTimer = null
 let popoverHovering = false
+let badgeListenersBound = false
+
+// Preview dialog state
+const preview = reactive({
+  visible: false,
+  loading: false,
+  title: '',
+  type: '',       // 'pdf' | 'image' | 'text' | 'unsupported'
+  blobUrl: '',
+  textContent: '',
+  unsupported: false
+})
 
 function goBack() {
   router.push('/index')
@@ -299,6 +384,7 @@ function handleNewSession() {
 
 function switchSession(session) {
   activeSessionId.value = session.id
+  activeEvidenceTab.value = 'evidence'
   loadMessages(session.id)
 }
 
@@ -322,7 +408,7 @@ function loadMessages(sessionId) {
         if (m.role === 'assistant') assistantIndices.push(i)
       })
       // Populated refs (those with actual chunk data)
-      const populatedRefs = sessionRefs.filter(r => r && r.chunks && r.chunks.length > 0)
+      const populatedRefs = sessionRefs.filter(r => referenceChunks(r).length > 0)
 
       // RAGFlow stores references newest-first; match from the end:
       // last assistant message gets last populated ref, etc.
@@ -398,27 +484,35 @@ function handleSend() {
         activeSessionId.value = newSession.id
       }
       messages.value.push({ role: 'user', content: question })
-      startStreaming(question)
+      scrollToBottom()
+      nextTick(() => startStreaming(question))
     })
   } else {
     messages.value.push({ role: 'user', content: question })
-    startStreaming(question)
+    scrollToBottom()
+    nextTick(() => startStreaming(question))
   }
 }
 
 function startStreaming(question) {
+  // Cancel any in-flight stream before starting a new one
+  if (abortStream) {
+    abortStream()
+    abortStream = null
+  }
   streaming.value = true
   waiting.value = true
   streamingText.value = ''
   streamingThink.value = ''
   streamingThinkDone.value = true  // RAGFlow native API has no reasoning_content
+  scrollToBottom()
   let references = {}
   let answerBuffer = ''
   let thinking = false
   let thinkBuffer = ''
   let streamFinalReceived = false
 
-  sendMessageStream(
+  abortStream = sendMessageStream(
     chatId,
     activeSessionId.value,
     question,
@@ -476,6 +570,7 @@ function startStreaming(question) {
       }
     },
     () => {
+      abortStream = null
       // Keep locally accumulated message with proper think/answer separation
       messages.value.push({
         role: 'assistant',
@@ -494,6 +589,7 @@ function startStreaming(question) {
       nextTick(() => scrollToBottom())
     },
     (err) => {
+      abortStream = null
       proxy.$modal.msgError('消息发送失败: ' + err.message)
       streaming.value = false
       waiting.value = false
@@ -505,7 +601,7 @@ function renderMessage(msg) {
   if (!msg.content) return ''
   let text = msg.content
   // Apply citation badges if references with chunks exist, or if content has markers
-  const chunks = msg.references?.chunks
+  const chunks = referenceChunks(msg.references)
   if (chunks && chunks.length > 0) {
     text = buildCitationHtml(text, chunks)
   } else if (hasCitationMarkers(text)) {
@@ -517,11 +613,11 @@ function renderMessage(msg) {
 
 function fileList(references) {
   if (!references) return []
-  return buildFileList(references.chunks, references.doc_aggs)
+  return buildFileList(referenceChunks(references), referenceDocAggs(references))
 }
 
 function evidencePreview(file) {
-  const chunks = activeReferences.value?.chunks || []
+  const chunks = referenceChunks(activeReferences.value)
   const chunk = chunks.find(c => c.document_id === file.doc_id)
   const content = chunk?.content || '该文档命中了当前问题的相关知识片段。'
   return content.length > 72 ? content.slice(0, 72) + '...' : content
@@ -533,9 +629,20 @@ function evidenceScore(index) {
 }
 
 function datasetIdForDocument(file, references) {
-  const chunks = references?.chunks || []
+  if (file?.dataset_id) return file.dataset_id
+  const chunks = referenceChunks(references)
   const chunk = chunks.find(c => c.document_id === file.doc_id && c.dataset_id)
   return chunk?.dataset_id || ''
+}
+
+function referenceChunks(references) {
+  const chunks = references?.chunks
+  return Array.isArray(chunks) ? chunks : Object.values(chunks || {})
+}
+
+function referenceDocAggs(references) {
+  const docAggs = references?.doc_aggs
+  return Array.isArray(docAggs) ? docAggs : Object.values(docAggs || {})
 }
 
 function downloadReferenceFile(file, references) {
@@ -547,21 +654,61 @@ function downloadEvidence(file) {
 }
 
 function handleFileClick(file, references) {
-  if (!references || !references.chunks) return
-  const chunks = references.chunks.filter(c => c.document_id === file.doc_id)
-  if (chunks.length === 0) return
-  const preview = chunks
-    .map((c, i) => `[片段 ${i + 1}] ${c.content || '(无内容)'}`)
-    .join('\n\n---\n\n')
-  proxy.$modal.alert(
-    preview,
-    file.doc_name || '文档预览',
-    {
-      confirmButtonText: '关闭',
-      customClass: 'file-preview-dialog',
-      dangerouslyUseHTMLString: false
-    }
-  )
+  if (!file.doc_id) return
+  preview.visible = true
+  preview.loading = true
+  preview.title = file.doc_name || '文档预览'
+  preview.type = ''
+  preview.blobUrl = ''
+  preview.textContent = ''
+  preview.unsupported = false
+
+  const url = import.meta.env.VITE_APP_BASE_API
+    + '/mag/chat/document/preview/'
+    + encodeURIComponent(file.doc_id)
+  const token = getToken()
+  fetch(url, { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(async res => {
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.msg || data.message || '预览失败')
+      }
+      const contentType = res.headers.get('content-type') || ''
+      if (contentType.includes('application/json')) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.msg || data.message || '预览失败')
+      }
+      return { blob: await res.blob(), contentType }
+    })
+    .then(({ blob, contentType }) => {
+      preview.loading = false
+      if (contentType.includes('pdf')) {
+        preview.type = 'pdf'
+        preview.blobUrl = URL.createObjectURL(blob)
+      } else if (contentType.includes('image')) {
+        preview.type = 'image'
+        preview.blobUrl = URL.createObjectURL(blob)
+      } else if (contentType.includes('text') || contentType.includes('plain')) {
+        preview.type = 'text'
+        blob.text().then(t => { preview.textContent = t })
+      } else {
+        preview.unsupported = true
+      }
+    })
+    .catch(err => {
+      preview.loading = false
+      preview.unsupported = true
+      proxy.$modal.msgError(err.message || '文件预览失败')
+    })
+}
+
+function closePreview() {
+  if (preview.blobUrl) {
+    URL.revokeObjectURL(preview.blobUrl)
+  }
+  preview.visible = false
+  preview.blobUrl = ''
+  preview.textContent = ''
 }
 
 // ========== Citation Popover ==========
@@ -588,8 +735,9 @@ function showPopover(badgeEl, index) {
   const msgIdx = allRows.indexOf(row)
   if (msgIdx < 0) return
   const msg = messages.value[msgIdx]
-  if (!msg || !msg.references || !msg.references.chunks) return
-  const chunk = msg.references.chunks[index]
+  const chunks = referenceChunks(msg?.references)
+  if (!chunks.length) return
+  const chunk = chunks[index]
   if (!chunk) return
 
   const rect = badgeEl.getBoundingClientRect()
@@ -657,7 +805,12 @@ function onPopoverLeave() {
 }
 
 function handleDownload(datasetId, documentId, fileName) {
-  const url = import.meta.env.VITE_APP_BASE_API + '/mag/chat/document/download/' + datasetId + '/' + documentId
+  const safeDatasetId = datasetId || 'unknown'
+  const url = import.meta.env.VITE_APP_BASE_API
+    + '/mag/chat/document/download/'
+    + encodeURIComponent(safeDatasetId)
+    + '/'
+    + encodeURIComponent(documentId)
   const token = getToken()
   fetch(url, { headers: { 'Authorization': 'Bearer ' + token } })
     .then(async res => {
@@ -702,26 +855,66 @@ function formatShortSessionDate(timeStr) {
 function scrollToBottom() {
   nextTick(() => {
     if (messageListRef.value) {
-      messageListRef.value.scrollTop = messageListRef.value.scrollHeight
+      requestAnimationFrame(() => {
+        if (messageListRef.value) {
+          messageListRef.value.scrollTop = messageListRef.value.scrollHeight
+        }
+      })
     }
   })
 }
 
-onMounted(() => {
-  loadSessions()
-  // Citation badge hover delegation
-  if (messageListRef.value) {
+function bindBadgeListeners() {
+  if (messageListRef.value && !badgeListenersBound) {
     messageListRef.value.addEventListener('mouseover', onBadgeMouseEnter)
     messageListRef.value.addEventListener('mouseout', onBadgeMouseLeave)
+    badgeListenersBound = true
   }
+}
+
+function unbindBadgeListeners() {
+  if (messageListRef.value && badgeListenersBound) {
+    messageListRef.value.removeEventListener('mouseover', onBadgeMouseEnter)
+    messageListRef.value.removeEventListener('mouseout', onBadgeMouseLeave)
+    badgeListenersBound = false
+  }
+}
+
+function cleanupTransientState() {
+  if (abortStream) {
+    abortStream()
+    abortStream = null
+  }
+  streaming.value = false
+  waiting.value = false
+  popover.show = false
+  popoverHovering = false
+  clearTimeout(popoverTimer)
+  if (preview.visible) {
+    closePreview()
+  }
+}
+
+onMounted(() => {
+  loadSessions()
+  nextTick(bindBadgeListeners)
 })
 
 onBeforeUnmount(() => {
-  if (messageListRef.value) {
-    messageListRef.value.removeEventListener('mouseover', onBadgeMouseEnter)
-    messageListRef.value.removeEventListener('mouseout', onBadgeMouseLeave)
-  }
-  clearTimeout(popoverTimer)
+  cleanupTransientState()
+  unbindBadgeListeners()
+})
+
+// keep-alive 缓存时，离开页面需要清理资源，回来时恢复
+onDeactivated(() => {
+  cleanupTransientState()
+  unbindBadgeListeners()
+})
+
+onActivated(() => {
+  // 回来时重新加载会话列表以确保数据是最新的
+  loadSessions()
+  nextTick(bindBadgeListeners)
 })
 </script>
 
@@ -734,6 +927,10 @@ onBeforeUnmount(() => {
   background: #f3f6fa;
   color: #20242c;
   font-family: "Inter", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+}
+
+.chat-page {
+  min-height: calc(100vh - 84px);
 }
 
 .session-panel {
@@ -1319,6 +1516,63 @@ onBeforeUnmount(() => {
   font-size: 12px;
 }
 
+.kb-info-panel {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  padding: 22px 14px 8px;
+}
+
+.kb-info-section {
+  margin-bottom: 20px;
+
+  h4 {
+    margin: 0 0 8px;
+    color: #20242c;
+    font-size: 14px;
+    font-weight: 700;
+  }
+
+  p {
+    margin: 4px 0;
+    color: #667085;
+    font-size: 13px;
+  }
+}
+
+.kb-chunk-item {
+  margin-bottom: 12px;
+  padding: 12px;
+  border: 1px solid #edf1f6;
+  border-radius: 8px;
+  background: #f9fafb;
+}
+
+.kb-chunk-header {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 13px;
+
+  span {
+    color: #0874d8;
+    font-weight: 800;
+  }
+
+  strong {
+    color: #20242c;
+  }
+}
+
+.kb-chunk-content {
+  margin: 0;
+  color: #667085;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .citation-popover {
   position: fixed;
   max-width: 320px;
@@ -1411,5 +1665,70 @@ onBeforeUnmount(() => {
     max-width: 100%;
     min-width: 0;
   }
+}
+
+/* ========== 文件预览对话框 ========== */
+.preview-dialog .el-dialog__body {
+  min-height: 400px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.preview-loading {
+  text-align: center;
+  color: #909399;
+}
+.preview-loading p {
+  margin-top: 12px;
+  font-size: 14px;
+}
+
+.preview-unsupported {
+  text-align: center;
+  color: #909399;
+}
+.preview-unsupported p {
+  margin-top: 12px;
+  font-size: 15px;
+}
+.preview-hint {
+  font-size: 13px !important;
+  color: #c0c4cc;
+}
+
+.preview-content {
+  width: 100%;
+  height: 100%;
+}
+
+.preview-iframe {
+  width: 100%;
+  height: 70vh;
+  border: 1px solid #ebeef5;
+  border-radius: 4px;
+}
+
+.preview-image {
+  max-width: 100%;
+  max-height: 70vh;
+  display: block;
+  margin: 0 auto;
+  border-radius: 4px;
+}
+
+.preview-text {
+  max-height: 70vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  background: #f5f7fa;
+  border: 1px solid #ebeef5;
+  border-radius: 4px;
+  padding: 16px;
+  font-size: 13px;
+  line-height: 1.6;
+  margin: 0;
 }
 </style>

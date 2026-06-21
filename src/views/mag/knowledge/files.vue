@@ -488,12 +488,28 @@ async function submitUpload() {
 
 function handleDownload(row) {
   const url = downloadDocumentUrl(datasetId.value, row.id)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = row.name
-  document.body.appendChild(link)
-  link.click()
-  document.body.removeChild(link)
+  const token = getToken()
+  fetch(url, { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(async res => {
+      const contentType = res.headers.get('content-type') || ''
+      if (!res.ok || contentType.includes('application/json')) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.msg || data.message || '下载失败')
+      }
+      return res.blob()
+    })
+    .then(blob => {
+      const link = document.createElement('a')
+      link.href = URL.createObjectURL(blob)
+      link.download = row.name || row.id
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(link.href)
+    })
+    .catch(err => {
+      proxy.$modal.msgError(err.message || '文件下载失败')
+    })
 }
 
 function handleDelete(row) {

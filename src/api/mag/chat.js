@@ -85,9 +85,12 @@ export function delSessions(chatId, ids) {
 // ========== SSE Streaming ==========
 
 // 发送消息（SSE 流式响应）— 不使用 Axios，直接 fetch
+// 返回 abort 函数用于取消请求（组件卸载时调用）
 export function sendMessageStream(chatId, sessionId, question, onChunk, onDone, onError) {
   const url = import.meta.env.VITE_APP_BASE_API + '/mag/chat/' + chatId + '/send'
   const token = getToken()
+  const controller = new AbortController()
+  let stopped = false
 
   fetch(url, {
     method: 'POST',
@@ -95,7 +98,8 @@ export function sendMessageStream(chatId, sessionId, question, onChunk, onDone, 
       'Content-Type': 'application/json',
       'Authorization': 'Bearer ' + token
     },
-    body: JSON.stringify({ sessionId, question, stream: true })
+    body: JSON.stringify({ sessionId, question, stream: true }),
+    signal: controller.signal
   })
   .then(response => {
     if (!response.ok) {
@@ -107,8 +111,8 @@ export function sendMessageStream(chatId, sessionId, question, onChunk, onDone, 
 
     function read() {
       reader.read().then(({ done, value }) => {
-        if (done) {
-          onDone()
+        if (done || stopped) {
+          if (!stopped) onDone()
           return
         }
         buffer += decoder.decode(value, { stream: true })
@@ -119,28 +123,33 @@ export function sendMessageStream(chatId, sessionId, question, onChunk, onDone, 
           for (const line of lines) {
             if (line.startsWith('data:')) {
               const content = line.substring(5).trim()
-              // Check for stream termination
               if (content === '[DONE]') {
+                stopped = true
                 onDone()
                 return
               }
               try {
                 const json = JSON.parse(content)
-                onChunk(json)
+                if (!stopped) onChunk(json)
               } catch (e) {
                 // Skip unparseable lines
               }
             }
           }
         }
-        read()
+        if (!stopped) read()
       }).catch(err => {
-        onError(err)
+        if (!stopped) onError(err)
       })
     }
     read()
   })
   .catch(err => {
-    onError(err)
+    if (!stopped) onError(err)
   })
+
+  return () => {
+    stopped = true
+    controller.abort()
+  }
 }

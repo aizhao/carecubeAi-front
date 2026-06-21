@@ -89,17 +89,18 @@ export function buildCitationHtml(text, chunks) {
  *
  * @param {Array} chunks   reference.chunks
  * @param {Array} docAggs  reference.doc_aggs
- * @returns {Array<{doc_id: string, doc_name: string, count: number}>}
+ * @returns {Array<{doc_id: string, doc_name: string, dataset_id: string, count: number}>}
  */
 export function buildFileList(chunks, docAggs) {
-  const safeChunks = chunks || []
-  const safeAggs = docAggs || []
+  const safeChunks = Array.isArray(chunks) ? chunks : Object.values(chunks || {})
+  const safeAggs = Array.isArray(docAggs) ? docAggs : Object.values(docAggs || {})
 
   // Prefer doc_aggs if available (more accurate counts)
   if (safeAggs.length > 0) {
     return safeAggs.map((d) => ({
       doc_id: d.doc_id || '',
       doc_name: d.doc_name || '',
+      dataset_id: safeChunks.find((c) => c.document_id === d.doc_id && c.dataset_id)?.dataset_id || '',
       count: d.count || 0
     }))
   }
@@ -115,6 +116,7 @@ export function buildFileList(chunks, docAggs) {
       seen.set(id, {
         doc_id: id,
         doc_name: c.document_name || c.doc_name || '',
+        dataset_id: c.dataset_id || '',
         count: 1
       })
     }

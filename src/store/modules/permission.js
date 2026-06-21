@@ -61,6 +61,11 @@ function filterAsyncRouter(asyncRouterMap, lastRouter = false, type = false) {
     if (type && route.children) {
       route.children = filterChildren(route.children)
     }
+    const componentPath = route.component
+    if (componentPath === 'mag/chat/chat') {
+      route.meta = route.meta || {}
+      route.meta.noCache = true
+    }
     if (route.component) {
       // Layout ParentView 组件特殊处理
       if (route.component === 'Layout') {

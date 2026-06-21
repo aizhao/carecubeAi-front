@@ -77,7 +77,18 @@ export function delDocument(datasetId, ids) {
 
 // 下载文件
 export function downloadDocumentUrl(datasetId, docId) {
-  return import.meta.env.VITE_APP_BASE_API + '/mag/kb/doc/download/' + datasetId + '/' + docId
+  return import.meta.env.VITE_APP_BASE_API
+    + '/mag/kb/doc/download/'
+    + encodeURIComponent(datasetId)
+    + '/'
+    + encodeURIComponent(docId)
+}
+
+// 预览文件
+export function previewDocumentUrl(docId) {
+  return import.meta.env.VITE_APP_BASE_API
+    + '/mag/chat/document/preview/'
+    + encodeURIComponent(docId)
 }
 
 // 获取文档详情
