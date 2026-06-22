@@ -1,15 +1,17 @@
 <template>
   <div class="search-container">
     <iframe
-      src="http://10.10.18.9:60000/search/share?shared_id=eb4b0dd8688c11f1b7a4edf71643dd02&from=search&auth=NZB9STisikgq3xUyWEnktImWsRaAWiov&tenantId=6a5762a8438e11f1b6e44b01962fc173"
+      v-if="searchUrl"
+      :src="searchUrl"
       class="search-iframe"
       frameborder="0"
     />
+    <el-empty v-else description="请配置 AI 检索地址" />
   </div>
 </template>
 
 <script setup>
-// AI Search — embedded iframe
+const searchUrl = import.meta.env.VITE_APP_RAGFLOW_SEARCH_URL || ''
 </script>
 
 <style lang="scss" scoped>

@@ -54,8 +54,9 @@ router.beforeEach(async (to, from) => {
         // 重新导航到目标路由，确保动态路由已注册
         return { ...to, replace: true }
       } catch (err) {
+        console.error('[Permission] 路由生成失败:', err)
         await useUserStore().logOut()
-        ElMessage.error(err)
+        ElMessage.error(err?.message || err?.msg || String(err))
         return { path: '/' }
       }
     }

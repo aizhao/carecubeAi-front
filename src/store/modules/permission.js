@@ -33,7 +33,7 @@ const usePermissionStore = defineStore(
         this.sidebarRouters = routes
       },
       generateRoutes(roles) {
-        return new Promise(resolve => {
+        return new Promise((resolve, reject) => {
           // 向后端请求路由数据
           getRouters().then(res => {
             const sdata = JSON.parse(JSON.stringify(res.data))
@@ -49,6 +49,8 @@ const usePermissionStore = defineStore(
             this.setDefaultRoutes(sidebarRoutes)
             this.setTopbarRoutes(defaultRoutes)
             resolve(rewriteRoutes)
+          }).catch(err => {
+            reject(err)
           })
         })
       }
@@ -125,6 +127,10 @@ export const loadView = (view) => {
     if (dir === view) {
       res = () => modules[path]()
     }
+  }
+  if (!res) {
+    console.warn('[Permission] 未找到视图组件:', view)
+    return () => import('@/views/error/404.vue')
   }
   return res
 }
