@@ -74,8 +74,27 @@ SSE 业务事件：
 ## Docker 部署
 
 ```bash
-# 在项目根目录执行
+# 先在 carecubeai-api/deploy 启动后端服务，确保 carecubeai-net 网络存在
+
+# 再在当前前端项目根目录执行
 docker compose up -d --build
+
+# 前端访问 http://localhost:8088
+```
+
+前端 Nginx 会将 `/prod-api/*` 代理到 Docker 网络内的 `backend:8081`。因此前端容器需要加入后端 compose 创建的 `carecubeai-net` 网络。
+
+常用命令：
+
+```bash
+# 只重建前端镜像和容器
+docker compose up -d --build frontend
+
+# 查看前端日志
+docker compose logs -f frontend
+
+# 停止前端服务
+docker compose down
 ```
 
 ## 环境变量

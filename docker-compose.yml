@@ -1,0 +1,27 @@
+# ============================================
+# 睿立方感控AI助手 — 前端 Docker Compose 部署
+#
+# 使用方法：
+#   1. 先在 carecubeai-api/deploy 启动后端服务
+#   2. 在当前前端项目目录执行：docker compose up -d --build
+#   3. 访问：http://你的服务器IP:8088
+#
+# 前端 Nginx 通过 Docker 网络访问后端服务名 backend:8081。
+# ============================================
+
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: carecubeai-frontend:latest
+    container_name: carecubeai-frontend
+    restart: unless-stopped
+    ports:
+      - "8088:80"
+    networks:
+      - carecubeai-net
+
+networks:
+  carecubeai-net:
+    external: true
